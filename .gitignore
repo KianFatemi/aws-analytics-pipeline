@@ -1,20 +1,19 @@
-# Terraform files
-**/.terraform/
 *.tfstate
-*.tfstate.*.backup
-*.tfvars
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-.terraformrc
-terraform.rc
+*.tfstate.*
 
+.terraform/
+.terraform.lock.hcl
+
+*.tfplan
+
+crash.log
+crash.*.log
 
 /node_modules
-
+node_modules/
 /lambda_function.zip
-*.log
+
+.env
 
 .DS_Store
 Thumbs.db
