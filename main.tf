@@ -162,6 +162,20 @@ resource "aws_iam_role_policy" "lambda_data_permissions" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "monitoring_ssm_access" {
+  role       = aws_iam_role.monitoring_instance_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_security_group_rule" "monitoring_egress_to_endpoints" {
+  type                     = "egress"
+  from_port                = 443 
+  to_port                  = 443 
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.monitoring_sg.id
+  source_security_group_id = aws_security_group.vpc_endpoint_sg.id
+}
+
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
   enable_dns_support   = true
@@ -176,6 +190,7 @@ resource "aws_subnet" "subnet_a" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.1.0/24"
   availability_zone = "us-east-1a"
+  map_public_ip_on_launch = true #
   tags = {
     Name = "rds-subnet-a"
   }
@@ -214,6 +229,33 @@ resource "aws_security_group" "lambda_sg" {
 resource "aws_security_group" "vpc_endpoint_sg" {
   name   = "vpc-endpoint-sg"
   vpc_id = aws_vpc.main.id
+}
+
+resource "aws_vpc_endpoint" "ssm_interface" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.us-east-1.ssm"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
+}
+
+resource "aws_vpc_endpoint" "ssmmessages_interface" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.us-east-1.ssmmessages"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
+}
+
+resource "aws_vpc_endpoint" "ec2messages_interface" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.us-east-1.ec2messages"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
 }
 
 resource "aws_security_group" "rds_sg" {
@@ -326,4 +368,111 @@ resource "aws_internet_gateway" "main_igw" {
   tags = {
     Name = "main-igw"
   }
+}
+
+# Monitoring Stack on EC2
+
+data "aws_ami" "amazon_linux_2" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
+resource "aws_iam_role" "monitoring_instance_role" {
+  name = "monitoring-instance-role"
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17",
+    Statement = [{
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "monitoring_cw_access" {
+  role       = aws_iam_role.monitoring_instance_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
+}
+
+resource "aws_iam_instance_profile" "monitoring_instance_profile" {
+  name = "monitoring-instance-profile"
+  role = aws_iam_role.monitoring_instance_role.name
+}
+
+resource "aws_security_group" "monitoring_sg" {
+  name   = "monitoring-sg"
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "monitoring_server" {
+  ami           = data.aws_ami.amazon_linux_2.id 
+  instance_type = "t3.micro"             
+  subnet_id     = aws_subnet.subnet_a.id 
+  iam_instance_profile = aws_iam_instance_profile.monitoring_instance_profile.name
+  vpc_security_group_ids = [aws_security_group.monitoring_sg.id]
+
+
+user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              amazon-linux-extras install docker -y
+              service docker start
+              usermod -a -G docker ec2-user
+              curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              chmod +x /usr/local/bin/docker-compose
+              
+              # Create a directory for our monitoring stack
+              mkdir /home/ec2-user/monitoring
+              cd /home/ec2-user/monitoring
+              
+              # Create docker-compose.yml
+              cat <<EOT > docker-compose.yml
+              ${file("${path.module}/docker-compose.yml")}
+              EOT
+              
+              # Create prometheus.yml
+              cat <<EOT > prometheus.yml
+              ${file("${path.module}/prometheus.yml")}
+              EOT
+              
+              # Create loki-config.yml
+              cat <<EOT > loki-config.yml
+              ${file("${path.module}/loki-config.yml")}
+              EOT
+              
+              # Start the services
+              docker-compose up -d
+              EOF
+
+  tags = {
+    Name = "Monitoring-Server"
+  }
+}
+
+resource "aws_route_table_association" "subnet_a_public" {
+  subnet_id      = aws_subnet.subnet_a.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+output "monitoring_server_public_ip" {
+  value = aws_instance.monitoring_server.public_ip
 }
