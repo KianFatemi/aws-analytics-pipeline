@@ -1,0 +1,21 @@
+region: us-east-1
+metrics:
+- aws_namespace: AWS/ApiGateway
+  aws_metric_name: Latency
+  aws_dimensions: [ApiName]
+  aws_statistics: [Average, SampleCount]
+
+- aws_namespace: AWS/Lambda
+  aws_metric_name: Invocations
+  aws_dimensions: [FunctionName]
+  aws_statistics: [Sum]
+
+- aws_namespace: AWS/Lambda
+  aws_metric_name: Errors
+  aws_dimensions: [FunctionName]
+  aws_statistics: [Sum]
+
+- aws_namespace: AWS/Lambda
+  aws_metric_name: Duration
+  aws_dimensions: [FunctionName]
+  aws_statistics: [Average, Maximum]

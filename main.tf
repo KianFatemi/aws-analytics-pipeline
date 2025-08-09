@@ -403,6 +403,23 @@ resource "aws_iam_role" "monitoring_instance_role" {
   })
 }
 
+#Persistent IP and Storage for Monitoring Server
+
+resource "aws_eip" "monitoring_eip" {
+  domain = "vpc"
+}
+
+
+resource "aws_ebs_volume" "grafana_data" {
+  availability_zone = aws_subnet.subnet_a.availability_zone 
+  size              = 8 
+  type              = "gp3"
+
+  tags = {
+    Name = "grafana-data-volume"
+  }
+}
+
 resource "aws_iam_role_policy_attachment" "monitoring_cw_access" {
   role       = aws_iam_role.monitoring_instance_role.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
@@ -448,7 +465,7 @@ resource "aws_instance" "monitoring_server" {
   vpc_security_group_ids = [aws_security_group.monitoring_sg.id]
 
 
-user_data = <<-EOF
+   user_data = <<-EOF
               #!/bin/bash
               yum update -y
               amazon-linux-extras install docker -y
@@ -456,33 +473,61 @@ user_data = <<-EOF
               usermod -a -G docker ec2-user
               curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               chmod +x /usr/local/bin/docker-compose
+
+              sudo mkdir -p /mnt/grafana-data
               
-              # Create a directory for our monitoring stack
-              mkdir /home/ec2-user/monitoring
-              cd /home/ec2-user/monitoring
+              if ! sudo file -s /dev/sdf | grep -q ext4; then
+                  sudo mkfs -t ext4 /dev/sdf
+              fi
               
-              # Create docker-compose.yml
-              cat <<EOT > docker-compose.yml
+              sudo mount /dev/sdf /mnt/grafana-data
+              
+              while ! mount | grep -q '/mnt/grafana-data'; do
+                echo "Waiting for /mnt/grafana-data to be mounted by the system..."
+                sleep 2
+              done
+              
+              sudo chown -R 472:472 /mnt/grafana-data
+
+              mkdir -p /home/ec2-user/monitoring
+              
+              cat <<EOT > /home/ec2-user/monitoring/docker-compose.yml
               ${file("${path.module}/docker-compose.yml")}
               EOT
               
-              # Create prometheus.yml
-              cat <<EOT > prometheus.yml
+              cat <<EOT > /home/ec2-user/monitoring/prometheus.yml
               ${file("${path.module}/prometheus.yml")}
               EOT
               
-              # Create loki-config.yml
-              cat <<EOT > loki-config.yml
+              cat <<EOT > /home/ec2-user/monitoring/loki-config.yml
               ${file("${path.module}/loki-config.yml")}
               EOT
-              
-              # Start the services
-              docker-compose up -d
-              EOF
 
+              cat <<EOT > /home/ec2-user/monitoring/cloudwatch_exporter.yml
+              ${file("${path.module}/cloudwatch_exporter.yml")}
+              EOT
+
+              cat <<EOT > /home/ec2-user/monitoring/promtail-config.yml
+              ${file("${path.module}/promtail-config.yml")}
+              EOT
+              
+              echo "Mount point ready. Starting Docker Compose..."
+              sudo /usr/local/bin/docker-compose -f /home/ec2-user/monitoring/docker-compose.yml up -d
+              EOF
   tags = {
     Name = "Monitoring-Server"
   }
+}
+
+resource "aws_eip_association" "eip_assoc" {
+  instance_id   = aws_instance.monitoring_server.id
+  allocation_id = aws_eip.monitoring_eip.id
+}
+
+resource "aws_volume_attachment" "ebs_attach" {
+  device_name = "/dev/sdf"
+  volume_id   = aws_ebs_volume.grafana_data.id
+  instance_id = aws_instance.monitoring_server.id
 }
 
 resource "aws_route_table_association" "subnet_a_public" {
@@ -490,6 +535,6 @@ resource "aws_route_table_association" "subnet_a_public" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-output "monitoring_server_public_ip" {
-  value = aws_instance.monitoring_server.public_ip
+output "monitoring_dashboard_url" {
+  value = "http://${aws_eip.monitoring_eip.public_ip}:3000"
 }
