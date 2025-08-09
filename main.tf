@@ -176,6 +176,15 @@ resource "aws_security_group_rule" "monitoring_egress_to_endpoints" {
   source_security_group_id = aws_security_group.vpc_endpoint_sg.id
 }
 
+resource "aws_security_group_rule" "endpoints_ingress_from_monitoring" {
+  type                     = "ingress"
+  from_port                = 443 # HTTPS
+  to_port                  = 443 # HTTPS
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.vpc_endpoint_sg.id
+  source_security_group_id = aws_security_group.monitoring_sg.id
+}
+
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
   enable_dns_support   = true
@@ -411,6 +420,14 @@ resource "aws_security_group" "monitoring_sg" {
   ingress {
     from_port   = 3000
     to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+    
+  ingress {
+    from_port   = 9090
+    to_port     = 9090
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
