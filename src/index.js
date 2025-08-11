@@ -1,5 +1,3 @@
-// src/index.js (Final Debugging Version)
-
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, PutCommand } = require("@aws-sdk/lib-dynamodb");
@@ -23,8 +21,6 @@ async function initializeDbClient() {
 
     console.log("Attempting to initialize database connection...");
     
-    // We are removing the inner try/catch. 
-    // Any error here will now be caught by the main handler.
     const secretValue = await secretsManagerClient.send(
         new GetSecretValueCommand({ SecretId: RDS_SECRET_ARN })
     );
@@ -78,7 +74,6 @@ exports.handler = async (event) => {
         return { statusCode: 200, body: JSON.stringify({ message: "Event processed and stored successfully!", eventId }) };
 
     } catch (error) {
-        // This will now catch the ORIGINAL error from the database client.
         console.error("HANDLER CAUGHT ERROR:", error); 
         return {
             statusCode: 500,

@@ -9,9 +9,9 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-- job_name: lambda
-  aws:
-    region: us-east-1
-    log_groups:
-      names:
+  - job_name: lambda
+    cloudwatchlogs:
+      region: us-east-1
+      log_group_names:
         - /aws/lambda/analytics-ingestor
+      use_incoming_timestamp: true

@@ -10,12 +10,28 @@ services:
       - "9090:9090"
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.0.0
     container_name: loki
     volumes:
       - ./loki-config.yml:/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  cloudwatch_exporter:
+    image: prom/cloudwatch-exporter:latest
+    container_name: cloudwatch_exporter
+    ports:
+      - "9106:9106"
+    volumes:
+      - ./cloudwatch_exporter.yml:/config/config.yml
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/promtail-config.ym
 
   grafana:
     image: grafana/grafana:latest

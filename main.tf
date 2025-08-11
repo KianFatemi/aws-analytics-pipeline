@@ -38,6 +38,7 @@ resource "aws_lambda_function" "analytics_ingestor" {
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 120
+  memory_size      = 512
 
     vpc_config {
     subnet_ids         = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
@@ -314,15 +315,25 @@ resource "aws_db_instance" "analytics_db" {
 }
 
 resource "aws_vpc_endpoint" "s3_gateway" {
-  vpc_id          = aws_vpc.main.id
-  service_name    = "com.amazonaws.us-east-1.s3"
-  route_table_ids = [aws_vpc.main.main_route_table_id]
+  vpc_id       = aws_vpc.main.id
+  service_name = "com.amazonaws.us-east-1.s3"
+  route_table_ids = [aws_route_table.public_rt.id] 
+}
+
+resource "aws_vpc_endpoint" "s3_interface" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.us-east-1.s3"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
 }
 
 resource "aws_vpc_endpoint" "dynamodb_gateway" {
-  vpc_id          = aws_vpc.main.id
-  service_name    = "com.amazonaws.us-east-1.dynamodb"
-  route_table_ids = [aws_vpc.main.main_route_table_id]
+  vpc_id       = aws_vpc.main.id
+  service_name = "com.amazonaws.us-east-1.dynamodb"
+  vpc_endpoint_type = "Gateway" 
+  route_table_ids = [aws_route_table.public_rt.id]
 }
 
 resource "aws_vpc_endpoint" "secretsmanager_interface" {
@@ -343,7 +354,6 @@ resource "aws_security_group_rule" "lambda_egress_to_endpoints" {
   security_group_id        = aws_security_group.lambda_sg.id 
   source_security_group_id = aws_security_group.vpc_endpoint_sg.id 
 }
-
 
 resource "aws_security_group_rule" "endpoints_ingress_from_lambda" {
   type                     = "ingress" 
@@ -403,7 +413,7 @@ resource "aws_iam_role" "monitoring_instance_role" {
   })
 }
 
-#Persistent IP and Storage for Monitoring Server
+# Persistent IP and Storage for Monitoring Server
 
 resource "aws_eip" "monitoring_eip" {
   domain = "vpc"
@@ -537,4 +547,42 @@ resource "aws_route_table_association" "subnet_a_public" {
 
 output "monitoring_dashboard_url" {
   value = "http://${aws_eip.monitoring_eip.public_ip}:3000"
+}
+
+resource "aws_iam_role_policy" "monitoring_logs_permissions" {
+  name = "monitoring-logs-access-policy"
+  role = aws_iam_role.monitoring_instance_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams",
+          "logs:GetLogEvents"
+        ],
+        Effect   = "Allow",
+        Resource = "*" 
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_function" "analytics_pipeline" {
+  function_name = "analytics-pipeline"
+  role          = aws_iam_role.lambda_exec_role.arn
+  handler       = "index.handler"
+  runtime       = "python3.9"
+  filename      = "lambda_function.zip"
+
+  vpc_config {
+    subnet_ids         = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "monitoring_cw_access" {
+  role       = aws_iam_role.monitoring_instance_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
 }
