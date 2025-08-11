@@ -581,8 +581,3 @@ resource "aws_lambda_function" "analytics_pipeline" {
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
 }
-
-resource "aws_iam_role_policy_attachment" "monitoring_cw_access" {
-  role       = aws_iam_role.monitoring_instance_role.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
-}
